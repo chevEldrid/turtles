@@ -63,7 +63,7 @@ turtle_ok() {
 wt_path() { echo "$ORCH/worktrees/$1"; }
 log_dir() { echo "$ORCH/logs/$1"; }
 manifest() { echo "$ORCH/manifests/$1.md"; }
-base_branch() { echo "agent/$1"; }  # anchors persistent worktree
+base_branch() { echo "agent/$1-base"; } # anchors persistent worktree
 
 slugify() {
   echo "$*" | tr '[:upper:]' '[:lower:]' \
