@@ -29,6 +29,7 @@ Usage:
   turtle open <turtle>                        # prints worktree path
   turtle reset <turtle>                       # hard reset & clean worktree to origin/main (DANGEROUS)
   turtle remove <turtle>                      # remove worktree (keeps branches)
+  turtle cleanup <turtle>                     # resets and removes current branch (DANGEROUS)
   turtle help
 
 Turtles: raphael | donatello | michelangelo | leonardo
@@ -56,7 +57,7 @@ die(){ echo "Error: $*" >&2; exit 1; }
 turtle_ok() {
   case "${1:-}" in
     raphael|donatello|michelangelo|leonardo) ;;
-    *) die "Unknown turtle '${1:-}'. Must be raphael|donatello|michelangelo|leonardo." ;;
+    *) die "Unknown turtle '${1:-}'. Must be raphael | donatello | michelangelo | leonardo." ;;
   esac
 }
 
@@ -124,6 +125,34 @@ ensure_worktree() {
       git worktree add "$w" "$b"
     else
       git worktree add -b "$b" "$w" "$REMOTE/$TRUNK"
+    fi
+  )
+}
+
+current_branch() {
+  local t="$1"
+  local w; w="$(wt_path "$t")"
+  ( cd "$w" && git rev-parse --abbrev-ref HEAD )
+}
+
+is_turtle_task_branch() {
+  local t="$1"
+  local b="$2"
+  # task branches look like: agent/<turtle>/<something>
+  [[ "$b" == "agent/$t/"* ]]
+}
+
+ensure_local_trunk_branch() {
+  local t="$1"
+  local w; w="$(wt_path "$t")"
+  ( cd "$w"
+    git fetch "$REMOTE" --prune
+    # Create local trunk if missing, else fast-forward it
+    if git show-ref --verify --quiet "refs/heads/$TRUNK"; then
+      git checkout "$TRUNK" >/dev/null
+      git reset --hard "$REMOTE/$TRUNK" >/dev/null
+    else
+      git checkout -B "$TRUNK" "$REMOTE/$TRUNK" >/dev/null
     fi
   )
 }
@@ -269,6 +298,40 @@ cmd_remove() {
   echo "Removed worktree: $w"
 }
 
+cmd_cleanup() {
+  local t="${1:-}"
+  turtle_ok "$t"
+  local w; w="$(wt_path "$t")"
+  [ -d "$w" ] || die "No worktree for $t at $w"
+  local old_branch
+  old_branch="$(current_branch "$t")"
+  # Refuse to cleanup if there are uncommitted changes (safer default)
+  if (cd "$w" && (! git diff --quiet || ! git diff --cached --quiet)); then
+    die "$t has uncommitted changes in $w. Commit/stash/discard before cleanup."
+  fi
+  echo "Cleaning up $t worktree: $w"
+  echo "Current branch: $old_branch"
+  echo "Target: $REMOTE/$TRUNK"
+  # Move to trunk and hard reset / clean
+  ensure_local_trunk_branch "$t"
+  ( cd "$w"
+    git clean -fd >/dev/null
+    # prune deleted remotes (your workflow deletes branches after merge)
+    git remote prune "$REMOTE" >/dev/null || true
+  )
+  # Delete old branch if it was a turtle task branch
+  if is_turtle_task_branch "$t" "$old_branch"; then
+    ( cd "$w"
+      # delete locally; ignore failure if already gone
+      git branch -D "$old_branch" >/dev/null 2>&1 || true
+    )
+    echo "Deleted local task branch: $old_branch"
+  else
+    echo "Not deleting branch (not a turtle task branch): $old_branch"
+  fi
+  echo "Cleanup complete. $t is now on $TRUNK at $(cd "$w" && git rev-parse --short HEAD)."
+}
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -278,6 +341,7 @@ main() {
     open) cmd_open "$@" ;;
     reset) cmd_reset "$@" ;;
     remove) cmd_remove "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
     -h|--help|help|"") usage ;;
     *) die "Unknown command '$cmd'. Run: turtle help" ;;
   esac
