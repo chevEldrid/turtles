@@ -122,6 +122,9 @@ You’ll see output like:
 “Next steps” commands to run in that turtle’s window
 
 2) In that turtle’s terminal window, start Codex
+```bash
+codex --dangerously-bypass-approvals-and-sandbox
+```
 
 ## Checking progress across turtles
 Show status for all turtles
