@@ -69,7 +69,7 @@ run_path() { echo "$ORCH/runs/$1/$2"; }
 base_branch() { echo "agent/$1-base"; } # anchors persistent worktree
 
 shell_quote() {
-  printf "%s" "${1:-}" | sed "s/'/'\\\\''/g"
+  printf "%s" "${1:-}" | sed "s/'/'\\''/g"
 }
 
 slugify() {
@@ -308,7 +308,15 @@ run_with_logging() {
   local log_file="$1"
   shift || true
 
-  if [ "$#" -gt 0 ]; then
+  if command -v script >/dev/null 2>&1; then
+    if [ "$#" -gt 0 ]; then
+      script -q "$log_file" "$@"
+    elif [ -n "${TURTLE_CODEX_CMD:-}" ]; then
+      script -q "$log_file" bash -lc "$TURTLE_CODEX_CMD"
+    else
+      script -q "$log_file" codex
+    fi
+  elif [ "$#" -gt 0 ]; then
     "$@" 2>&1 | tee -a "$log_file"
   elif [ -n "${TURTLE_CODEX_CMD:-}" ]; then
     bash -lc "$TURTLE_CODEX_CMD" 2>&1 | tee -a "$log_file"
