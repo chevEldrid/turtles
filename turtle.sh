@@ -1,54 +1,55 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# turtle: PR-per-task branch prep for 4 persistent git worktrees (no tmux)
-# You keep 4 terminal windows open yourself and run `codex` manually in each.
+# turtle: PR-per-task branch prep for 4 persistent git worktrees plus
+# a structured session start path that integrates with Splinter.
 #
 # Default layout:
-#   Repo:        ~/work/myrepo           (set REPO=... to override)
-#   Orchestration: ~/codex-orch          (set ORCH=... to override)
-#   Worktrees:   ~/codex-orch/worktrees/<turtle>
-#   Logs:        ~/codex-orch/logs/<turtle>/
-#   Manifests:   ~/codex-orch/manifests/<turtle>.md
+#   Repo:          ~/work/myrepo              (set REPO=... to override)
+#   Orchestration: ~/src/codex-orch          (set ORCH=... to override)
+#   Worktrees:     ~/src/codex-orch/worktrees/<turtle>
+#   Manifests:     ~/src/codex-orch/manifests/<turtle>.md
+#   Runs:          ~/src/codex-orch/runs/<turtle>/<run_id>/
 
 # --- CONFIG ---
 REPO="${REPO:-$HOME/work/myrepo}"      # <-- change this default if you want
-ORCH="${ORCH:-$HOME/codex-orch}"
+ORCH="${ORCH:-$HOME/src/codex-orch}"
 TRUNK="${TRUNK:-main}"
 REMOTE="${REMOTE:-origin}"
 
 # --- HELP ---
 usage() {
   cat <<'USAGE'
-turtle: codex multi-agent worktree prep (NO tmux) with PR-per-task branches
+turtle: codex multi-agent worktree prep with PR-per-task branches
 
 Usage:
   turtle init
-  turtle prep <turtle> "<objective text>"     # creates/checks out new per-task branch; prints next steps
+  turtle prep <turtle> "<ticket-or-objective>"   # branch prep only
+  turtle start <turtle> [command ...]            # generate Splinter brief, log session, then run codex
   turtle status
-  turtle open <turtle>                        # prints worktree path
-  turtle reset <turtle>                       # hard reset & clean worktree to origin/main (DANGEROUS)
-  turtle remove <turtle>                      # remove worktree (keeps branches)
-  turtle cleanup <turtle>                     # resets and removes current branch (DANGEROUS)
+  turtle open <turtle>                           # prints worktree path
+  turtle reset <turtle>                          # hard reset & clean worktree to origin/main (DANGEROUS)
+  turtle remove <turtle>                         # remove worktree (keeps branches)
+  turtle cleanup <turtle>                        # resets and removes current branch (DANGEROUS)
   turtle help
 
 Turtles: raphael | donatello | michelangelo | leonardo
 
 Env vars:
   REPO=/path/to/repo
-  ORCH=/path/to/orch (default: ~/codex-orch)
+  ORCH=/path/to/orch (default: ~/src/codex-orch)
   TRUNK=main
   REMOTE=origin
+  SPLINTER_CMD=/path/to/splinter
+  TURTLE_CODEX_CMD='codex --some-flag'
 
-Recommended workflow (4 separate terminal windows):
-  Window 1: cd "$(turtle open raphael)"
-  Window 2: cd "$(turtle open donatello)"
-  Window 3: cd "$(turtle open michelangelo)"
-  Window 4: cd "$(turtle open leonardo)"
+Recommended workflow:
+  turtle prep raphael "TRUE-12345"
+  turtle start raphael
 
-Then for each new task:
-  turtle prep raphael "Fix flaky tests in JournalEntryService update suite"
-  # In Raphael window: run the printed codex command (or just 'codex' if you don't care about tee logs)
+The start command creates a run record, writes a Splinter brief, mirrors it into
+the turtle worktree as SPLINTER_BRIEF.md, logs the session, and asks Splinter
+to ingest the run when the command exits.
 USAGE
 }
 
@@ -62,9 +63,14 @@ turtle_ok() {
 }
 
 wt_path() { echo "$ORCH/worktrees/$1"; }
-log_dir() { echo "$ORCH/logs/$1"; }
 manifest() { echo "$ORCH/manifests/$1.md"; }
+run_root() { echo "$ORCH/runs/$1"; }
+run_path() { echo "$ORCH/runs/$1/$2"; }
 base_branch() { echo "agent/$1-base"; } # anchors persistent worktree
+
+shell_quote() {
+  printf "%s" "${1:-}" | sed "s/'/'\\\\''/g"
+}
 
 slugify() {
   echo "$*" | tr '[:upper:]' '[:lower:]' \
@@ -82,7 +88,7 @@ task_branch() {
 }
 
 ensure_dirs() {
-  mkdir -p "$ORCH"/{worktrees,logs,manifests,locks}
+  mkdir -p "$ORCH"/{worktrees,manifests,locks,runs}
 }
 
 ensure_repo() {
@@ -120,7 +126,6 @@ ensure_worktree() {
   mkdir -p "$(dirname "$w")"
   ( cd "$REPO"
     git fetch "$REMOTE" --prune
-    # Create a stable base branch for the turtle worktree if needed
     if git show-ref --verify --quiet "refs/heads/$b"; then
       git worktree add "$w" "$b"
     else
@@ -138,7 +143,6 @@ current_branch() {
 is_turtle_task_branch() {
   local t="$1"
   local b="$2"
-  # task branches look like: agent/<turtle>/<something>
   [[ "$b" == "agent/$t/"* ]]
 }
 
@@ -147,7 +151,6 @@ ensure_local_trunk_branch() {
   local w; w="$(wt_path "$t")"
   ( cd "$w"
     git fetch "$REMOTE" --prune
-    # Create local trunk if missing, else fast-forward it
     if git show-ref --verify --quiet "refs/heads/$TRUNK"; then
       git checkout "$TRUNK" >/dev/null
       git reset --hard "$REMOTE/$TRUNK" >/dev/null
@@ -164,14 +167,12 @@ checkout_new_task_branch() {
   local b; b="$(task_branch "$t" "$objective")"
 
   ( cd "$w"
-    # Don't stomp on work-in-progress
     if ! git diff --quiet || ! git diff --cached --quiet; then
       echo "Error: $t has uncommitted changes in $w; commit/stash before starting a new task." >&2
       exit 1
     fi
 
     git fetch "$REMOTE" --prune
-    # Create new branch off latest trunk
     git checkout -B "$b" "$REMOTE/$TRUNK" >/dev/null
     echo "$b"
   )
@@ -196,20 +197,141 @@ Status: prepared
 EOF
 }
 
-make_logfile() {
+write_manifest_start() {
   local t="$1"
-  local ldir; ldir="$(log_dir "$t")"
-  mkdir -p "$ldir"
-  echo "$ldir/$(date '+%F_%H-%M-%S').log"
+  local run_id="$2"
+  local branch_name="$3"
+  local log_file="$4"
+  local brief_file="$5"
+  local m; m="$(manifest "$t")"
+  local now; now="$(date '+%Y-%m-%d %H:%M:%S')"
+
+  cat >> "$m" <<EOF
+
+---
+Run ID: $run_id
+Started: $now
+Branch: $branch_name
+Status: started
+Brief: $brief_file
+Log: $log_file
+EOF
+}
+
+find_splinter_cmd() {
+  local script_dir candidate
+
+  if [ -n "${SPLINTER_CMD:-}" ] && [ -x "${SPLINTER_CMD:-}" ]; then
+    echo "$SPLINTER_CMD"
+    return 0
+  fi
+
+  if command -v splinter >/dev/null 2>&1; then
+    command -v splinter
+    return 0
+  fi
+
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  for candidate in "$script_dir/splinter" "$script_dir/splinter.sh"; do
+    if [ -x "$candidate" ]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_worktree_exclude() {
+  local w="$1"
+  local pattern="$2"
+  local exclude_file
+
+  exclude_file="$(git -C "$w" rev-parse --git-path info/exclude)"
+  mkdir -p "$(dirname "$exclude_file")"
+  touch "$exclude_file"
+
+  if ! grep -qxF "$pattern" "$exclude_file"; then
+    printf '\n%s\n' "$pattern" >> "$exclude_file"
+  fi
+}
+
+write_run_file() {
+  local run_file="$1"
+  local run_id="$2"
+  local turtle="$3"
+  local branch_name="$4"
+  local worktree="$5"
+  local manifest_file="$6"
+  local log_file="$7"
+  local brief_file="$8"
+  local started_at="$9"
+
+  cat > "$run_file" <<EOF
+RUN_ID='$(shell_quote "$run_id")'
+TURTLE='$(shell_quote "$turtle")'
+BRANCH='$(shell_quote "$branch_name")'
+WORKTREE='$(shell_quote "$worktree")'
+REPO='$(shell_quote "$REPO")'
+TRUNK='$(shell_quote "$TRUNK")'
+REMOTE='$(shell_quote "$REMOTE")'
+MANIFEST='$(shell_quote "$manifest_file")'
+LOGFILE='$(shell_quote "$log_file")'
+BRIEF_FILE='$(shell_quote "$brief_file")'
+STARTED_AT='$(shell_quote "$started_at")'
+EOF
+}
+
+append_run_result() {
+  local run_file="$1"
+  local ended_at="$2"
+  local exit_code="$3"
+
+  cat >> "$run_file" <<EOF
+ENDED_AT='$(shell_quote "$ended_at")'
+EXIT_CODE='$(shell_quote "$exit_code")'
+EOF
+}
+
+install_brief_into_worktree() {
+  local worktree="$1"
+  local brief_file="$2"
+  local target="$worktree/SPLINTER_BRIEF.md"
+
+  if [ -f "$brief_file" ]; then
+    cp "$brief_file" "$target"
+    ensure_worktree_exclude "$worktree" "SPLINTER_BRIEF.md"
+  fi
+}
+
+run_with_logging() {
+  local log_file="$1"
+  shift || true
+
+  if [ "$#" -gt 0 ]; then
+    "$@" 2>&1 | tee -a "$log_file"
+  elif [ -n "${TURTLE_CODEX_CMD:-}" ]; then
+    bash -lc "$TURTLE_CODEX_CMD" 2>&1 | tee -a "$log_file"
+  else
+    codex 2>&1 | tee -a "$log_file"
+  fi
 }
 
 cmd_init() {
+  local splinter_cmd
+
   ensure_dirs
   ensure_repo
   for t in raphael donatello michelangelo leonardo; do
     ensure_manifest "$t"
     ensure_worktree "$t"
   done
+
+  splinter_cmd="$(find_splinter_cmd || true)"
+  if [ -n "$splinter_cmd" ]; then
+    "$splinter_cmd" init >/dev/null
+  fi
+
   echo "Initialized."
   echo "Open 4 terminals and run:"
   echo "  cd \"$(wt_path raphael)\""
@@ -230,11 +352,9 @@ cmd_prep() {
   ensure_manifest "$t"
   ensure_worktree "$t"
 
-  local new_branch logfile w
+  local new_branch w
   new_branch="$(checkout_new_task_branch "$t" "$objective")"
   write_manifest_update "$t" "$objective" "$new_branch"
-
-  logfile="$(make_logfile "$t")"
   w="$(wt_path "$t")"
 
   cat <<EOF
@@ -243,20 +363,79 @@ Prepared: $t
 Worktree: $w
 Branch:   $new_branch
 Manifest: $(manifest "$t")
-Log:      $logfile
 
-Next (run in your $t terminal window):
+Next:
   cd "$w"
-  # optional: confirm branch
   git status -sb
-  # start codex with logging
-  codex 2>&1 | tee -a "$logfile"
+  turtle start "$t"
 
 When ready for PR:
   git push -u $REMOTE HEAD
-  # open PR in your host (or use gh pr create if you use GitHub CLI)
 
 EOF
+}
+
+cmd_start() {
+  local t="${1:-}"
+  local splinter_cmd branch_name worktree run_id run_dir run_file log_file brief_file started_at ended_at
+  local exit_code=0
+  shift || true
+
+  [ -n "$t" ] || die "Missing turtle name."
+  turtle_ok "$t"
+
+  ensure_dirs
+  ensure_repo
+  ensure_manifest "$t"
+  ensure_worktree "$t"
+
+  worktree="$(wt_path "$t")"
+  branch_name="$(current_branch "$t")"
+  run_id="$(date '+%Y%m%d-%H%M%S')"
+  run_dir="$(run_path "$t" "$run_id")"
+  run_file="$run_dir/run.env"
+  log_file="$run_dir/session.log"
+  brief_file="$run_dir/splinter-brief.md"
+  started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  splinter_cmd="$(find_splinter_cmd || true)"
+
+  mkdir -p "$run_dir"
+  write_run_file "$run_file" "$run_id" "$t" "$branch_name" "$worktree" "$(manifest "$t")" "$log_file" "$brief_file" "$started_at"
+
+  if [ -n "$splinter_cmd" ]; then
+    "$splinter_cmd" brief --run-file "$run_file" --output "$brief_file" >/dev/null || true
+  fi
+
+  install_brief_into_worktree "$worktree" "$brief_file"
+  write_manifest_start "$t" "$run_id" "$branch_name" "$log_file" "$brief_file"
+
+  cat <<EOF
+
+Starting: $t
+Worktree: $worktree
+Branch:   $branch_name
+Run ID:   $run_id
+Log:      $log_file
+Brief:    $brief_file
+
+The current brief is mirrored into the worktree as:
+  $worktree/SPLINTER_BRIEF.md
+
+EOF
+
+  (
+    cd "$worktree"
+    run_with_logging "$log_file" "$@"
+  ) || exit_code=$?
+
+  ended_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  append_run_result "$run_file" "$ended_at" "$exit_code"
+
+  if [ -n "$splinter_cmd" ]; then
+    "$splinter_cmd" ingest --run-file "$run_file" >/dev/null || true
+  fi
+
+  return "$exit_code"
 }
 
 cmd_status() {
@@ -305,24 +484,19 @@ cmd_cleanup() {
   [ -d "$w" ] || die "No worktree for $t at $w"
   local old_branch
   old_branch="$(current_branch "$t")"
-  # Refuse to cleanup if there are uncommitted changes (safer default)
   if (cd "$w" && (! git diff --quiet || ! git diff --cached --quiet)); then
     die "$t has uncommitted changes in $w. Commit/stash/discard before cleanup."
   fi
   echo "Cleaning up $t worktree: $w"
   echo "Current branch: $old_branch"
   echo "Target: $REMOTE/$TRUNK"
-  # Move to trunk and hard reset / clean
   ensure_local_trunk_branch "$t"
   ( cd "$w"
     git clean -fd >/dev/null
-    # prune deleted remotes (your workflow deletes branches after merge)
     git remote prune "$REMOTE" >/dev/null || true
   )
-  # Delete old branch if it was a turtle task branch
   if is_turtle_task_branch "$t" "$old_branch"; then
     ( cd "$w"
-      # delete locally; ignore failure if already gone
       git branch -D "$old_branch" >/dev/null 2>&1 || true
     )
     echo "Deleted local task branch: $old_branch"
@@ -336,7 +510,8 @@ main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
     init) cmd_init ;;
-    prep|start) cmd_prep "$@" ;;   # 'start' alias for convenience
+    prep) cmd_prep "$@" ;;
+    start) cmd_start "$@" ;;
     status) cmd_status ;;
     open) cmd_open "$@" ;;
     reset) cmd_reset "$@" ;;

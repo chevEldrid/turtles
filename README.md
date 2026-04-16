@@ -3,8 +3,9 @@ A lightweight “4-agent” workflow for running **four concurrent Codex session
 
 - **git worktrees** (one per turtle) to avoid file collisions
 - **PR-per-task branches** (one branch/PR for every task you assign)
-- **four persistent terminal windows** (you run `codex` manually in each)
-- orchestration artifacts stored **outside** the repo (`~/codex-orch`) to keep work clean
+- **four persistent terminal windows** (you launch Codex through `turtle start`)
+- **Splinter shared memory** generated from turtle run artifacts
+- orchestration artifacts stored **outside** the repo (`~/src/codex-orch`) to keep work clean
 
 This is intentionally minimal and “distinct” from the codebase: it doesn’t add files to your repo and doesn’t require tmux.
 
@@ -22,18 +23,19 @@ You will keep 4 terminal windows open:
 Each time you assign a task to a turtle, you run:
 
 ```bash
-turtle prep <turtle> "Your objective"
+turtle prep <turtle> "TASK-12345"
+turtle start <turtle>
 ```
 
 ## Installation
 1) Choose an orchestration directory
 This guide uses:
 
-Orchestration home: ~/codex-orch (outside the repo)
+Orchestration home: ~/src/codex-orch (outside the repo)
 
 Create it:
 ```bash
-mkdir -p ~/codex-orch/{worktrees,logs,manifests,locks}
+mkdir -p ~/src/codex-orch/{worktrees,manifests,locks,runs}
 ```
 2) Install the turtle script
 Put the script at:
@@ -64,6 +66,14 @@ which turtle
 turtle help
 ```
 
+Optional: install the Splinter helper beside it:
+```bash
+cp splinter.sh ~/bin/splinter
+chmod +x ~/bin/splinter
+which splinter
+splinter help
+```
+
 ## One-time setup
 1) Initialize the turtles
 Run:
@@ -73,14 +83,18 @@ turtle init
 This creates:
 4 worktrees:
 ```bash
-~/codex-orch/worktrees/raphael
-~/codex-orch/worktrees/donatello
-~/codex-orch/worktrees/michelangelo
-~/codex-orch/worktrees/leonardo
+~/src/codex-orch/worktrees/raphael
+~/src/codex-orch/worktrees/donatello
+~/src/codex-orch/worktrees/michelangelo
+~/src/codex-orch/worktrees/leonardo
 ```
 4 manifests:
 ```bash
-~/codex-orch/manifests/<turtle>.md
+~/src/codex-orch/manifests/<turtle>.md
+```
+Run artifacts as you start sessions:
+```bash
+~/src/codex-orch/runs/<turtle>/<run_id>/
 ```
 Note: The worktrees are anchored to stable base branches like agent/raphael,
 but each task creates a new branch under agent/<turtle>/....
@@ -110,20 +124,32 @@ You now have four isolated workspaces ready for concurrent work.
 1) Assign a task to a turtle
 From any terminal:
 ```bash
-turtle prep raphael "Fix flaky tests in JournalEntryService update suite"
+turtle prep raphael "TRUE-12345"
 ```
 You’ll see output like:
 
 - Worktree path
 - Newly created branch name
 - Manifest path
-- Log file path
 
-“Next steps” commands to run in that turtle’s window
-
-2) In that turtle’s terminal window, start Codex
+2) Start the turtle session
+From that turtle’s terminal window:
 ```bash
-codex --dangerously-bypass-approvals-and-sandbox
+turtle start raphael
+```
+
+`turtle start` now does the runtime setup:
+
+- creates a run record under `~/src/codex-orch/runs/...`
+- generates a Splinter brief for that run
+- mirrors the brief into the worktree as `SPLINTER_BRIEF.md`
+- excludes `SPLINTER_BRIEF.md` from git status
+- logs the session output
+- runs `splinter ingest` when the session exits
+
+If you need to override the Codex launch command temporarily:
+```bash
+TURTLE_CODEX_CMD='codex --dangerously-bypass-approvals-and-sandbox' turtle start raphael
 ```
 
 ## Checking progress across turtles
@@ -137,5 +163,55 @@ This prints git status -sb for each turtle worktree.
 
 Manifests are kept outside the repo:
 ```bash
-open ~/codex-orch/manifests/raphael.md
+open ~/src/codex-orch/manifests/raphael.md
 ```
+
+## Splinter memory
+
+`splinter` is the shared-memory sidecar for turtles. The intended flow is:
+
+1. `turtle start` creates a run artifact set
+2. the session log and git metadata are ingested automatically
+3. Splinter stores raw observations in `signals.jsonl`
+4. Splinter regenerates `learnings.auto.md`
+5. you edit `learnings.md` when you want to keep or correct a durable learning
+
+Initialize Splinter storage:
+```bash
+splinter init
+```
+
+That creates:
+```bash
+~/src/codex-orch/splinter/signals.jsonl
+~/src/codex-orch/splinter/learnings.md
+~/src/codex-orch/splinter/learnings.auto.md
+~/src/codex-orch/splinter/briefs/
+~/src/codex-orch/splinter/reviews/
+```
+
+Useful manual controls:
+```bash
+splinter ingest
+splinter learnings
+splinter open
+splinter show
+```
+
+What each command does:
+
+- `splinter ingest`: re-run ingestion across turtle runs, or ingest a specific run with `--run-file`
+- `splinter learnings`: print the curated and generated learnings files
+- `splinter open`: open `learnings.md` for manual curation
+- `splinter show`: inspect recent raw signals
+
+If you want to regenerate a brief manually for a known run:
+```bash
+splinter brief --run-file ~/src/codex-orch/runs/raphael/<run_id>/run.env
+```
+
+The main files are:
+
+- `signals.jsonl`: append-only raw auto-ingested observations
+- `learnings.auto.md`: generated candidate patterns from those signals
+- `learnings.md`: human-edited shared memory future turtles should trust
