@@ -94,6 +94,10 @@ trim_line() {
   printf '%s' "${1:-}" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
+reverse_lines() {
+  awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) print lines[i] }'
+}
+
 branch_keywords() {
   printf '%s\n' "${1:-}" \
     | tr '/:-_' ' ' \
@@ -314,7 +318,7 @@ collect_recent_signals() {
 
   keywords="$(branch_keywords "$branch_name" | paste -sd '|' -)"
 
-  signal_lines="$(tail -n 200 "$SIGNALS_FILE" | tac)"
+  signal_lines="$(tail -n 200 "$SIGNALS_FILE" | reverse_lines)"
   if [ -n "$keywords" ]; then
     printf '%s\n' "$signal_lines" \
       | awk -v turtle_name="$turtle_name" -v keywords="$keywords" '
