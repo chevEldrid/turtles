@@ -147,6 +147,11 @@ turtle start raphael
 - logs the session output
 - runs `splinter ingest` when the session exits
 
+By default, `turtle start` launches:
+```bash
+codex --dangerously-bypass-approvals-and-sandbox
+```
+
 If you need to override the Codex launch command temporarily:
 ```bash
 TURTLE_CODEX_CMD='codex --dangerously-bypass-approvals-and-sandbox' turtle start raphael

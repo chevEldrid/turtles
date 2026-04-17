@@ -16,6 +16,7 @@ REPO="${REPO:-$HOME/work/myrepo}"      # <-- change this default if you want
 ORCH="${ORCH:-$HOME/src/codex-orch}"
 TRUNK="${TRUNK:-main}"
 REMOTE="${REMOTE:-origin}"
+TURTLE_CODEX_CMD="${TURTLE_CODEX_CMD:-codex --dangerously-bypass-approvals-and-sandbox}"
 
 # --- HELP ---
 usage() {
