@@ -178,8 +178,9 @@ open ~/src/codex-orch/manifests/raphael.md
 1. `turtle start` creates a run artifact set
 2. the session log and git metadata are ingested automatically
 3. Splinter stores raw observations in `signals.jsonl`
-4. Splinter regenerates `learnings.auto.md`
-5. you edit `learnings.md` when you want to keep or correct a durable learning
+4. when `codex exec` is available, Splinter distills raw signals into `learnings.ai.md`
+5. Splinter mirrors the AI-distilled memory into `learnings.auto.md` for turtle briefs
+6. you edit `learnings.md` when you want to keep or correct a durable learning
 
 Initialize Splinter storage:
 ```bash
@@ -191,6 +192,7 @@ That creates:
 ~/src/codex-orch/splinter/signals.jsonl
 ~/src/codex-orch/splinter/learnings.md
 ~/src/codex-orch/splinter/learnings.auto.md
+~/src/codex-orch/splinter/learnings.ai.md
 ~/src/codex-orch/splinter/briefs/
 ~/src/codex-orch/splinter/reviews/
 ```
@@ -210,6 +212,19 @@ What each command does:
 - `splinter open`: open `learnings.md` for manual curation
 - `splinter show`: inspect recent raw signals
 
+AI distillation is enabled automatically when `codex exec` is available:
+```bash
+splinter ingest --ai
+splinter ingest --no-ai
+SPLINTER_AI=0 splinter ingest
+SPLINTER_AI_MODEL=gpt-5.4-mini splinter ingest
+```
+
+The distillation review packets are saved under:
+```bash
+~/src/codex-orch/splinter/reviews/
+```
+
 If you want to regenerate a brief manually for a known run:
 ```bash
 splinter brief --run-file ~/src/codex-orch/runs/raphael/<run_id>/run.env
@@ -218,5 +233,6 @@ splinter brief --run-file ~/src/codex-orch/runs/raphael/<run_id>/run.env
 The main files are:
 
 - `signals.jsonl`: append-only raw auto-ingested observations
-- `learnings.auto.md`: generated candidate patterns from those signals
+- `learnings.auto.md`: generated memory included in future turtle briefs
+- `learnings.ai.md`: generated AI distillation from raw signals
 - `learnings.md`: human-edited shared memory future turtles should trust
