@@ -4,7 +4,7 @@ A lightweight “4-agent” workflow for running **four concurrent Codex session
 - **git worktrees** (one per turtle) to avoid file collisions
 - **PR-per-task branches** (one branch/PR for every task you assign)
 - **four persistent terminal windows** (you launch Codex through `turtle start`)
-- **Splinter shared memory** generated from turtle run artifacts
+- **Splinter manual rules** included at turtle session start
 - orchestration artifacts stored **outside** the repo (`~/src/codex-orch`) to keep work clean
 
 This is intentionally minimal and “distinct” from the codebase: it doesn’t add files to your repo and doesn’t require tmux.
@@ -141,11 +141,10 @@ turtle start raphael
 `turtle start` now does the runtime setup:
 
 - creates a run record under `~/src/codex-orch/runs/...`
-- generates a Splinter brief for that run
+- generates a Splinter brief from your manual rules
 - mirrors the brief into the worktree as `SPLINTER_BRIEF.md`
 - excludes `SPLINTER_BRIEF.md` from git status
 - logs the session output
-- runs `splinter ingest` when the session exits
 
 By default, `turtle start` launches:
 ```bash
@@ -171,15 +170,16 @@ Manifests are kept outside the repo:
 open ~/src/codex-orch/manifests/raphael.md
 ```
 
-## Splinter memory
+## Splinter rules
 
-`splinter` is the shared-memory sidecar for turtles. The intended flow is:
+`splinter` is the manual rules sidecar for turtles. The intended flow is:
 
 1. `turtle start` creates a run artifact set
-2. the session log and git metadata are ingested automatically
-3. Splinter stores raw observations in `signals.jsonl`
-4. Splinter regenerates `learnings.auto.md`
-5. you edit `learnings.md` when you want to keep or correct a durable learning
+2. Splinter reads your human-edited `rules.md`
+3. Splinter writes a brief containing those rules
+4. `turtle start` mirrors the brief into the worktree as `SPLINTER_BRIEF.md`
+
+There is no automatic ingest, memory building, signal storage, or AI distillation.
 
 Initialize Splinter storage:
 ```bash
@@ -188,27 +188,20 @@ splinter init
 
 That creates:
 ```bash
-~/src/codex-orch/splinter/signals.jsonl
-~/src/codex-orch/splinter/learnings.md
-~/src/codex-orch/splinter/learnings.auto.md
+~/src/codex-orch/splinter/rules.md
 ~/src/codex-orch/splinter/briefs/
-~/src/codex-orch/splinter/reviews/
 ```
 
 Useful manual controls:
 ```bash
-splinter ingest
-splinter learnings
+splinter rules
 splinter open
-splinter show
 ```
 
 What each command does:
 
-- `splinter ingest`: re-run ingestion across turtle runs, or ingest a specific run with `--run-file`
-- `splinter learnings`: print the curated and generated learnings files
-- `splinter open`: open `learnings.md` for manual curation
-- `splinter show`: inspect recent raw signals
+- `splinter rules`: print `rules.md`
+- `splinter open`: open `rules.md` for manual edits
 
 If you want to regenerate a brief manually for a known run:
 ```bash
@@ -217,6 +210,4 @@ splinter brief --run-file ~/src/codex-orch/runs/raphael/<run_id>/run.env
 
 The main files are:
 
-- `signals.jsonl`: append-only raw auto-ingested observations
-- `learnings.auto.md`: generated candidate patterns from those signals
-- `learnings.md`: human-edited shared memory future turtles should trust
+- `rules.md`: human-edited rules future turtles should use

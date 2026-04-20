@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # turtle: PR-per-task branch prep for 4 persistent git worktrees plus
-# a structured session start path that integrates with Splinter.
+# a structured session start path that includes manual Splinter rules.
 #
 # Default layout:
 #   Repo:          ~/work/myrepo              (set REPO=... to override)
@@ -26,7 +26,7 @@ turtle: codex multi-agent worktree prep with PR-per-task branches
 Usage:
   turtle init
   turtle prep <turtle> "<ticket-or-objective>"   # branch prep only
-  turtle start <turtle> [command ...]            # generate Splinter brief, log session, then run codex
+  turtle start <turtle> [command ...]            # include Splinter rules, log session, then run codex
   turtle status
   turtle open <turtle>                           # prints worktree path
   turtle reset <turtle>                          # hard reset & clean worktree to origin/main (DANGEROUS)
@@ -48,9 +48,9 @@ Recommended workflow:
   turtle prep raphael "TRUE-12345"
   turtle start raphael
 
-The start command creates a run record, writes a Splinter brief, mirrors it into
-the turtle worktree as SPLINTER_BRIEF.md, logs the session, and asks Splinter
-to ingest the run when the command exits.
+The start command creates a run record, writes a Splinter brief from the manual
+rules file, mirrors it into the turtle worktree as SPLINTER_BRIEF.md, and logs
+the session. Splinter does not ingest logs or build memory automatically.
 USAGE
 }
 
@@ -439,10 +439,6 @@ EOF
 
   ended_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   append_run_result "$run_file" "$ended_at" "$exit_code"
-
-  if [ -n "$splinter_cmd" ]; then
-    "$splinter_cmd" ingest --run-file "$run_file" >/dev/null || true
-  fi
 
   return "$exit_code"
 }
